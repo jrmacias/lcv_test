@@ -1,0 +1,107 @@
+1A. Calidad, trimming, kraken, alineamiento con referencia inicial con la pipeline.
+while read line; do python ../../pipeline_illumina.py -s $line -o ./$line -t 20 -r1 ./$line/$line*"_R1_"* -r2 ./$line/$line*"_R2_"* -md ./merge_res -Ref ./referencia_BTV4_SPA2010_01/btv_spa2010_01.fasta; done < samples_BTV.txt
+1B. Cobertura por segmento
+#index marked_dup.bam
+while read -r dir a line; do samtools index $dir/$line/secundario_bowtie2_referencia_inicial/$line"_bwa_sort_markedDup.bam"; done < samples.txt
+#depth por segmento y cobertura por segmento >1
+while read line; do samtools coverage ./$line/secundario/$line"_bwa_sort_markedDup.bam" > ./$line/secundario/$line"_samtools_coverage.tab"; done < samples_BTV.txt
+#cobertura vertical depth genome completo con samtools (USAR EL MARKED_DUP.BAM para no tener en cuenta duplicados):
+samtools depth -m 0 -a ./muestreo1/secundario_bwa_ehdv/muestreo1_bwa_sort_markedDup.bam | awk '{sum+=$3} END { printf "%.2f\n", sum/NR}'
+while read line; do samtools depth -m 0 -a ./$line/secundario/$line"_bwa_sort_markedDup.bam" | awk '{sum+=$3} END { printf "%.2f\n", sum/NR}'; done < samples.txt
+#cobertura horizontal genoma completo (<20x) con samtools:
+samtools depth -m 0 -a ./muestreo1/secundario_bwa_ehdv/muestreo1_bwa_sort_markedDup.bam  | awk '{if ($3 >= 20) {sum+=1}} END { printf "%.2f\n", (sum * 100)/NR}'
+while read line; do samtools depth -m 0 -a ./$line/secundario/$line"_bwa_sort_markedDup.bam"  | awk '{if ($3 >= 20) {sum+=1}} END { printf "%.2f\n", (sum * 100)/NR}'; done < samples.txt
+#cobertura samtool por segmento (depth)
+while read -r dir a line; do echo $line >>./merge_res/depth_by_segment_samtools_depth_referencia_inicial; while read -r chrom start end; do echo $chrom; samtools depth -m 0 -a ./$dir/$line/secundario_bowtie2_referencia_inicial/$line"_bwa_sort_markedDup.bam" -r $chrom | awk '{sum+=$3} END {print sum/NR}'; done < ./referencia_BTV4_SPA2010_01/regions.txt >> ./merge_res/depth_by_segment_samtools_depth_referencia_inicial; done < samples.txt
+#cobertura samtools por segmento (horizontal >20)
+while read -r dir a line; do echo $line >>./merge_res/horizontal_coverage_by_segment_samtools_depth_referencia_inicial; while read -r chrom start end; do echo $chrom; samtools depth -m 0 -a ./$dir/$line/secundario_bowtie2_referencia_inicial/$line"_bwa_sort_markedDup.bam" -r $chrom | awk '{ if ($3 >= 20) {sum+=1}} END { printf "%.2f\n", (sum * 100)/NR}'; done < ./referencia_BTV4_SPA2010_01/regions.txt >> ./merge_res/horizontal_coverage_by_segment_samtools_depth_referencia_inicial; done < samples.txt
+#contar reads mapeados por segmentos
+while read -r line reg; do echo $line; while read -r chr start end; do samtools view -c -q 30 ./$line/secundario/$line"_bwa_sort.bam" $chr; done < ./$line/$reg; done < samples.txt >>nreads_by_segment.txt
+
+2. Filtrar reads mapped con la referencia inicial
+while read -r line; do samtools view -u -F 4 ./$line/secundario/$line"_bwa_sort_markedDup.bam" > ./$line/secundario/$line"_nodup_mapped.bam"; done < samples_BTV.txt
+while read -r line; do samtools sort -@ 10 -n ./$line/secundario/$line"_nodup_mapped.bam" -o ./$line/secundario/$line"_nodup_sort_mapped.bam"; done < samples_btv.txt
+while read line; do bamToFastq -i ./$line/secundario/$line"_nodup_sort_mapped.bam" -fq ./$line/$line"_btv_R1.fastq" -fq2 ./$line/$line"_btv_R2.fastq"; done < samples_btv.txt
+while read line; do gzip ./$line/$line"_btv_"*".fastq"; done < samples_btv.txt
+3. Ensamblar
+/home/admingenomica/software/SPAdes-3.15.4-Linux/bin/spades.py -t 20 -1 paired_reads1 -2 paired_reads2 --cov-cutoff auto -o assembling_dir --careful
+while read line; do /home/admingenomica/software/SPAdes-3.15.4-Linux/bin/spades.py -t 10 -1 ./$line/$line"_btv_R1.fastq.gz" -2 ./$line/$line"_btv_R2.fastq.gz" --cov-cutoff auto -o ./$line/assembling/ --careful; done < samples.txt
+while read line; do quast.py -o ./$line/assembling -t 20 -r ./referencia_BTV4_SPA2010_01/btv_spa2010_01.fasta --pe1 ./$line/$line"_btv_R1.fastq.gz" --pe2 ./$line/$line"_btv_R2.fastq.gz" ./$line/assembling/scaffolds.fasta; done < samples_BTV.txt 
+5. Merge assembly quality con la pipeline
+while read line; do python ../../pipeline_illumina.py -s $line -o ./$line -t 20 -r1 ./$line/$line*"_R1_"* -r2 ./$line/$line*"_R2_"* -md ./merge_res -R ./referencia_BTV4_SPA2010_01/btv_spa2010_01.fasta; done < samples_BTV.txt
+6. Ordenar contigs con el genoma de referencia inicial (FALTA POR AÑADIR A LA PIPE DE VIRUS)
+while read line; do abacas -r ./referencia_BTV4_SPA2010_01/btv_spa2010_01_merged.fasta -q ./$line/assembling/scaffolds.fasta -p nucmer -o ./$line/assembling/$line"_ordered" -m -b; done < samples_BTV.txt
+#Cambiamos nombre a carpetas
+while read line; do mv ./$line/secundario ./$line/secundario_referencia_inicial; done < samples_BTV.txt
+while read line; do mv ./$line/assembling ./$line/assembling_referencia_inicial; done < samples_BTV.txt
+***********************
+7. Alineamiento con mycoplasma
+while read line; do mkdir ./$line/assembling; done < samples_BTV.txt
+while read line; do mkdir ./$line/secundario; done < samples_BTV.txt
+#cambiamos nombre tambien al fichero de estadistocas del alineamiento con la referencia inicial y del ensamblado.
+#alineamiento con la pipeline y el genoma de referencia de mycoplasma
+while read line; do python ../../pipeline_illumina.py -s $line -o ./$line -t 20 -r1 ./$line/$line*"_R1_"* -r2 ./$line/$line*"_R2_"* -md ./merge_res -R ../BTV_NGS_2022_001/referencia_mycoplasma/Mycoplasma_arthritidis.fasta; done < samples_BTV.txt
+#Calcular depth on target (secuencias de arn de mycoplasma)
+samtools depth -m 0 -a ./4073-22-14-BHK_bwa_sort_markedDup.bam -b /labgenomica/2023/BTV_NGS_2023_001/referencia_mycoplasma/rRNA_positions.bed | awk '{sum+=$3} END {print sum/NR}'
+#calcular total reads mapeados con secuencias diana
+samtools view -c -q 30 -F 2308./4073-22-14-BHK_bwa_sort_markedDup.bam -L /labgenomica/2023/BTV_NGS_2023_001/referencia_mycoplasma/rRNA_positions.bed
+
+##NO HACE FALTA ENSAMBLAR: 8. Filtrar reads mapped con mycoplasma
+while read line; do samtools view -u -F 4 ./$line/secundario/$line"_bwa_sort_markedDup.bam" > ./$line/secundario/$line"_nodup_mapped.bam"; done < samples_BTV.txt
+while read line; do samtools sort -@ 10 -n ./$line/secundario/$line"_nodup_mapped.bam" -o ./$line/secundario/$line"_nodup_sort_mapped.bam"; done < samples_btv.txt
+while read line; do bamToFastq -i ./$line/secundario/$line"_nodup_sort_mapped.bam" -fq ./$line/$line"_mycoplasma_R1.fastq" -fq2 ./$line/$line"_mycoplasma_R2.fastq"; done < samples_btv.txt
+while read line; do gzip ./$line/$line"_mycoplasma_"*".fastq"; done < samples_btv.txt
+9. Ensamblar genomas de mycoplasma.
+while read line; do /home/admingenomica/software/SPAdes-3.15.4-Linux/bin/spades.py -t 20 -1 ./$line/$line"_mycoplasma_R1.fastq.gz" -2 ./$line/$line"_mycoplasma_R2.fastq.gz" --cov-cutoff auto -o ./$line/assembling --careful; done < samples_BTV.txt
+10. Calidad del ensamblado
+while read line; do quast.py -o ./$line/assembling -t 20 -r ../BTV_NGS_2022_001/referencia_mycoplasma/Mycoplasma_arthritidis.fasta --pe1 ./$line/$line"_mycoplasma_R1.fastq.gz" --pe2 ./$line/$line"_mycoplasma_R2.fastq.gz" ./$line/assembling/scaffolds.fasta; done < samples_BTV.txt
+#Cambiamos nombre a carpetas
+while read line; do mv ./$line/secundario ./$line/secundario_referencia_mycoplasma; done < samples_BTV.txt
+while read line; do mv ./$line/assembling ./$line/assembling_referencia_mycoplasma; done < samples_BTV.txt
+**************************
+11. Alineamiento con hamster
+while read line; do mkdir ./$line/assembling; done < samples_BTV.txt
+while read line; do mkdir ./$line/secundario; done < samples_BTV.txt
+#alineamiento con la pipeline y el genoma de referencia de hamster
+while read line; do python ../../pipeline_illumina.py -s $line -o ./$line -t 20 -r1 ./$line/$line*"_R1_"* -r2 ./$line/$line*"_R2_"* -md ./merge_res -R ../BTV_NGS_2022_001/referencia_hamster/ncbi-genomes-2022-05-04/GCF_003668045.3_CriGri-PICRH-1.0_genomic.fna.gz; done < samples_BTV.txt
+while read line; do mv ./$line/secundario ./$line/secundario_referencia_hamster; done < samples_BTV.txt
+while read line; do mv ./$line/assembling ./$line/assembling_referencia_hamster; done < samples_BTV.txt
+#Calcular depth on target (secuencias de arn de mycoplasma)
+samtools depth -m 0 -a ./4073-22-14-BHK_bwa_sort_markedDup.bam -b /labgenomica/2022/BTV_NGS_2022_001/referencia_hamster/ncbi-genomes-2022-05-04/rRNA_sequences.bed | awk '{sum+=$3} END { print sum/NR}'
+#calcular total reads mapeados con secuencias diana
+samtools view -c -q 30 -F 3844 ./4073-22-14-BHK_bwa_sort_markedDup.bam -L /labgenomica/2022/BTV_NGS_2022_001/referencia_hamster/ncbi-genomes-2022-05-04/rna_sequences.bed
+***************************
+12. Blastn con los ensamblados. Contrucción de los genomas de referencia
+14. Lanzar la pipe para hacer el alineamiento, el base calling y la creacion de secuencias consenso con el genoma de referencia del best match
+#creare secundario y assembling
+#cambiar nombre de estadisticas del alineamiento con hamster
+#lanzar pipe
+while read line; do python ../../pipeline_illumina.py -s $line -o ./$line -t 20 -r1 ./$line/$line*"_R1_"* -r2 ./$line/$line*"_R2_"* -md ./merge_res -R ./referencia_best_matches/referencia_best_matches.fasta; done < samples_BTV.txt
+15. Calcular cobertura por segmento
+while read line; do samtools coverage ./$line/secundario/$line"_bwa_sort_markedDup.bam" > ./$line/secundario/$line"_samtools_coverage.tab"; done < samples_BTV.txt
+16. Cambiar nombre secundario y terciario
+while read line; do mv ./$line/secundario ./$line/secundario_referencia_best_matches; done < samples_BTV.txt
+while read line; do mv ./$line/terciario ./$line/terciario_referencia_best_matches; done < samples_BTV.txt
+while read line; do rm -rf ./$line/assembling; done < samples_BTV.txt
+#para crear la secuencia consenso con todos los segmentos, hay que eliminar los espacios en blanco entre segmento y segmento de la referencia.Usar la referencia acabada en pruebaaaa.
+
+************************************************************
+Si queremos que al realizar la secuencia consenso nos añada N en los nucleotidos no alineados:
+	1. Alinear normal, con su respectivo qualimap y samtools coverage
+	2. Variant calling tambien normal
+	3. buscamos las posiciones que no están cubiertas
+ 		(cobertura = 0) $bedtools genomecov -bga -ibam ./1507-23-17/secundario/1507-23-17_bwa_sort_markedDup.bam | grep -w 0$ > ./1507-23-17/secundario/no_aligne.bed
+		ó
+		(baja cobertura) $bedtools genomecov -bga -ibam ./1507-23-17/secundario/1507-23-17_bwa_sort_markedDup.bam | awk '$4<$5' > ./1507-23-17/secundario/low_coverage.bed
+		ó
+		(Cobertura < 10) $ bedtools genomecov -bga -ibam ./secundario_bwa_best_reference/1507-23-17_bwa_sort_markedDup.bam | awk '$4<10' > ./secundario_bwa_best_reference/less_10.bed
+		##con samtools:
+		samtools depth -m 0 -a ./secundario_best_ref/4015-23-08_bwa_sort_markedDup.bam | awk '$3<10 {print $1"\t"$2}' > ./secundario_best_ref/less_10.bed
+		(Cobertura < 10 por posicicón) $ samtools depth -a ./secundario_best_ref/4015-23-08_bwa_sort_markedDup.bam | awk '$3<10 {print $1"\t"$2}' > ./secundario_best_ref/less_10.bed 	
+		** Si se hace con samtools hay que editar el .bed para que lo reconozca. (Cromosoma	posición inicial	posición final) el NT 1º es la posición 0, así que hay que restarle 1 a cadaposición inicial
+
+
+	4. Lanzamos bcftools consensus con el parametro -m y el .bed file
+		$ bcftools consensus -p 1507-23-17 -f ./best_reference/AHSV_ref.fasta -m ./1507-23-17/secundario/no_aligned.bed ./1507-23-17/terciario/1507-23-17_filter.vcf.gz > ./1507-23-17/terciario/cobertura0/1507-23-17_consensus.fasta
+		ó
+		$ bcftools consensus -p 1507-23-17 -f ./best_reference/AHSV_ref.fasta -m ./1507-23-17/secundario/low_coverage.bed ./1507-23-17/terciario/1507-23-17_filter.vcf.gz > ./1507-23-17/terciario/cobertura_menor_5/1507-23-17_consensus.fasta

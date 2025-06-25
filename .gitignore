@@ -1,0 +1,10 @@
+# Python
+__pycache__/
+logs/
+*.pyc
+.idea
+
+*.log
+
+venv
+tests/data

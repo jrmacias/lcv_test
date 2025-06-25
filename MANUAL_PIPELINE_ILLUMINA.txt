@@ -1,0 +1,337 @@
+
+						#####################################
+						##     MANUAL PIPELINE ILLUMINA    ##
+						#####################################
+
+export PATH=$PATH:/home/admingenomica/software/ncbi-blast-2.9.0+/bin/
+export PATH=$PATH:/home/admingenomica/software/sanger-pathogens-Roary-12a726e/bin/
+export PATH=$PATH:/home/admingenomica/software/Recycler/recyclelib/
+export PATH=$PATH:/home/admingenomica/software/Recycler/bin
+
+#Convertir bcl files to fastq (en caso de problemas con el demultiplexado)
+(la carpeta "ficheros_carrera" debe contener la carpeta "Data", InterOp, la sample_sheet.csv y los otros documentos que se necesitan para acceder a los parámetros de calidad de la carrera con el software Illumina Sequencing Viewer. 
+nohup /usr/local/bcl2fastq2-v2.20.0/bin/bcl2fastq -R ./ficheros_carrera/ -o ./prueba_bcl2fastq/
+
+#Etapas del análisis
+1. Analisis de calidad de los reads y trimming con FastQC y Trimmomatic.
+2. Ensamblado con SPAdes.
+3. Análisis de calidad del ensamblado con Quast.
+4. Anotación del ensamblado con Prokka.
+5. Ordenar contigs con genoma de referencia con Abacas.
+6. Identificación de genes de resistencia con ResFinder (tambien metí en la pipe Card y ARG_Ann, pero los resultados de estos no los usamos al menos en las cepas de salmonella... por lo que vimos estos son menos curados y ResFinder da mejores resultados).
+7. Identificación de mutaciones puntuales relacionadas con resistencias con PointFinder.
+8. Identificación de replicones plasmídicos con PlasmidFinder.
+9. Caracterización de plásmidos completos con Recycler y PlasmidSpades.
+10. Caracterización de integrones con IntegronFinder.
+11. Análisis pangenómico con Roary.
+12. Mapping de reads con genoma de referencia con BWA y samtools.
+13. Análisis de cobertura del alineamiento con qualimap.
+14. Identificación de SNPs con bcftools y bedtools.
+15. Analisis filogenéticos con RAxML.
+
+##########################
+#Ejecución de la pipeline#
+##########################
+1. Acceder al manual de la terminal con python pipeline_illumina.py -h
+2. Para lanzar el análisis con todas las muestras de un mismo run:
+	1. Generar fichero de texto (ej. samples.txt) con los nombres de las cepas (1 nombre por linea).
+	2. Crear una carpeta con el nombre de cada cepa
+	while read line; do mkdir ./$line; done < samples.txt
+	3. Copiar los reads de cada muestra (ficheros fastq.gz) a las carpetas correspondientes:
+	while read line; do mv $line*"fastq.gz" ./$line/ ; done < samples.txt
+	4. Crear un directorio vacio en la carpeta del proyecto donde queremos que se guarden los ficheros de salida con la matrices de resultados de resfinder, plasmidfinder... (este directorio hay que darselo como argumento a la pipeline)
+	mkdir merge_res
+	5. Crear el index de la referencia (en caso de usar referencia):
+	samtools faidx reference.fasta
+	bwa index reference.fasta
+	6. Crear un bucle "while" que en cada iteración lea una línea del fichero samples.txt y lance la pipe para cada muestra. Para ver los argumentos necesarios para correr la pipeline acceder al help con  python /home/vserver1/Documentos/pipeline_illumina.py -h. Todos los argumentos son obligatorios excepto el nº de threads, la referencia y el fichero bed con las regiones fágicas. ATENCIÓN! 1. Para obtener el fichero bed con las regiones fágicas, usar la herramienta web PHASTER (http://phaster.ca/), cargando el fichero fasta del genoma de referencia y creando un fichero bed con el cromosoma y las coordenadas fágicas que devuelve el programa. 2. Pointfinder tiene bases de datos de mutaciones puntuales para unas especies concretas, y hay que determinar la especie cuando lanzas el programa (en el script de la pipeline esta "salmonella" por defecto. En caso de analizar otra especie hay que modificarlo en el script (función pointfinder). 3. Intengronfinder tarda mucho tiempo, asi que esta deshabiltado por defecto (para ejecutar, descomentar en el main):
+	
+	while read line; do python /home/vserver1/Documentos/scripts_y_manuales/pipeline_illumina.py -s $line -o ./$line -t 30 -r1 ./$line/$line*"R1"*".fastq.gz" -r2 ./$line/$line*"R2"*".fastq.gz" -R ../ref_enteritidis/s_enterica_enteriditis_P125109_REF.fasta -md ./merge_res -pb ./phages_regions.bed; done < ./samples
+	
+#Los pasos que vienen a continuación deben lanzarse una vez han terminado de ejecutarse todas las etapas de la pipeline (paso anterior).
+
+
+##########################
+#ELIMINAR CONTAMINACIONES#
+##########################
+
+#CREAR FASTQS SIN LOS READS CLASIFICADOS COMO ESCHERICHIA
+python /home/admingenomica/software/krakenTools/extract_kraken_reads.py -k 22SCA13_kraken_classifiedReads.txt -r ./22SCA13_kraken_report_classifiedReads.txt -s ../../primario_con_contaminacion/22SCA13_trimmed_1P.fastq.gz -s2 ../../primario_con_contaminacion/22SCA13_trimmed_2P.fastq.gz -t 561 --include-children --exclude --fastq-output -o ../../primario/22SCA13_trimmed_1P.fastq.g -o2 ../../primario/22SCA13_trimmed_2P.fastq.gz
+
+
+#CREAR FASTQS SOLO CON LOS READS CLASIFICADOS COMO SALMONELLA
+python /home/admingenomica/software/krakenTools/extract_kraken_reads.py -k 22SCA13_kraken_classifiedReads.txt -r ./22SCA13_kraken_report_classifiedReads.txt -s ../../primario_con_contaminacion/22SCA13_trimmed_1P.fastq.gz -s2 ../../primario_con_contaminacion/22SCA13_trimmed_2P.fastq.gz -t 590 --include-children --fastq-output -o ../../ANALISIS_SIN_CONTAMINACION/primario/22SCA13_trimmed_1P.fastq -o2 ../../ANALISIS_SIN_CONTAMINACION/primario/22SCA13_trimmed_2P.fastq
+
+
+#####################################
+#(opcional)Anotación de ficheros vcf#
+#####################################
+#Realizar en caso de haber hecho variant calling. Antes de realizar la anotacion hay que crear una base de datos fuente a partir de la cual realizar las anotaciones. Ya hay una creada para enteritidis (ver paso anterior). Para crear una nueva de otra especie seguir los pasos indicados en la siguiente url: https://pcingola.github.io/SnpEff/se_buildingdb/
+#Bucle para anotar todos los vcfs de un run
+while read b; do java -jar /home/vserver1/software/snpEff_latest_core/snpEff/snpEff.jar eff -no-downstream -no-upstream -no-utr P125109 ./$b/terciario/$b"_filter.vcf" > ../variant_analysis_from_alignment/vcfs_ann/$b"_filter_ann.vcf"; done <./sampleswhile read b; do java -jar /home/vserver1/software/snpEff_latest_core/snpEff/snpEff.jar eff -no-downstream -no-upstream -no-utr P125109 ./$b/terciario/$b"_filter.vcf" > ../variant_analysis_from_alignment/vcfs_ann/$b"_filter_ann.vcf"; done <./samples
+
+#####################################################################################
+#(Opcional) Modificación y editado de ficheros gff (anotaciones de los ensamblados):#
+#####################################################################################
+Generé unos scripts para modificar los ficheros gff para cambiar el formato de la anotación de los genes de resistencia anotados con la base de datos de resfinder y eliminar las hypothetical proteins:
+1. Modificación anotación AMR genes de resfinder
+while read line; do python modificar_gff.py ./$line/annotation/$line".gff"; done < ./samples
+2. Eliminación de las hypothetical proteins
+while read line; do python modificar_gff_removehyps.py ./$line/annotation/$line"_ed.gff"; done < ./samples
+
+
+######################
+#  Análisis cgMLST   #
+######################
+##CON CHEWBBACA:
+	A1. Descargar esquema cgMLST correespondiente (sp specie id, sc schema id)
+		$ chewBBACA.py DownloadSchema -sp 8 -sc 1 -o ./senterica_INNUENDO_wgMLST --cpu 20 (-sp 8 es salmonella y 5 ecoli; -sc es el unico esquema que hay, el innuendo)
+	A2. Crear nosotros un esquema:
+		$ export PATH=$PATH:/home/admingenomica/software/prodigal/
+		$ chewBBACA.py CreateSchema -i ./chewbacca/path_assembling.txt -o ./chewbacca/ecoli_chewbbaca_schema
+			(-i txt con las rutas de los ensamblados. También vale un solo fichero fasta)
+		**Si nos dice algo de la versión de Chewbbaca, crear el esquema con PrepExternalSchema:
+		$ chewBBACA.py PrepExternalSchema -i ./chewbacca/path_assembling.txt -o ./chewbacca/ecoli_chewbbaca_schema
+
+Para listeria:
+	B. AlleleCall 
+-----------------opcional-----------------------------------------------
+		1. Eliminar los contigs con menos de 500 bases y preparar el fichero con las rutas de los ensamblados 
+			$conda activate bbmap
+			$while read line; do reformat.sh in=./$line/assembling/$line".fasta" out=./$line/assembling/$line"_gt500.fasta" minlength=500; done < samples_cgmlst.txt
+			$conda deactivate
+			$conda activate base
+----------------------------------------------------------
+			$ while read line; do find /labgenomica/2023/SSPP_NGS_2023_001/ -name $line".fasta" >> rutas_ensamblados.txt; done < samples.txt
+			** Asegurarse de que hay un salto de linea en la última, sino no lo coge
+		2. Ejecutar el Allelecalling
+			$ conda activate chewie
+			$ chewBBACA.py AlleleCall -i rutas_ensamblados.txt -g /home/admingenomica/software/chewbbaca_schemas/listeria_monocytogenes/lmonocytogenes_Pasteur_cgMLST/ -o ./chewbbaca/
+	
+	C. Eliminar paralogos: (si no hay no es necesario)
+			$chewBBACA.py RemoveGenes -i ./chewbbaca/results_20240222T150605/results_alleles.tsv -g ./chewbbaca/results_20240222T150605/RepeatedLoci.txt -o ./chewbbaca/results_20240222T150605/results_alleles_NoRepeted.tsv
+	D. Determinar core genome loci:
+			$ chewBBACA.py AlleleCallEvaluator -i ./chewbbaca/results_20240222T150605/results_alleles_NoRepeted.tsv -g  /home/admingenomica/software/chewbbaca_schemas/listeria_monocytogenes/lmonocytogenes_Pasteur_cgMLST/Listeria_monocytogenes_Pasteur_cgMLST/ -o ./evaluation --cpu 10
+	
+	----------------------------------------------------		
+	E. Visualización de datos
+		- Grapetree
+			$ cd /chewbbaca/results_20240222T150605/cgMLST/
+			$  python /home/admingenomica/software/miniconda3/lib/python3.9/site-packages/grapetree/grapetree.py-p cgMLST.tsv{del cgMLST/ del cgmlst_95/} --method distance -x asymmetric -y 3 --n_proc 10 > grape_tree_distance_matrix.tab
+			$  python /home/admingenomica/software/miniconda3/lib/python3.9/site-packages/grapetree/grapetree.py-p ../results_20240222T150605/results_alleles.tsv --n_proc 20 > cgmlst_chewbacca_grapetree_tree.msa
+			$  python /home/admingenomica/software/miniconda3/lib/python3.9/site-packages/grapetree/grapetree.py-p chewbbaca/results_20241029T072434/cgMLST/cgMLST.tsv --n_proc 20 -m NJ > chewbbaca/results_20241029T072434/cgMLST/cgmlst_chewbacca_grapetree_nj_tree.nwk
+		-phyloviz Online (https://online2.phyloviz.net/index)
+		1. Cargar el archivo Presence_Absence.tsv (o results_allele_NoRepeted.tsv ??) Los resuñtados mas àrecido son con el de presencia a ausencia
+		2. Seleccionamos todos los nodos (shift + cursor) y le damos a Operations > Subset Operations > Compute Distances > Export Distance Matrix (con "select auxiliary Data" seleccionado)
+
+Para Salmonella:    Solo con el coregenome (3255 loci), si queremos hacerlo con wl wgMLST seguimos el procedimiento de listeria
+	B. AlleleCall solo con la lista de genes del core genome
+		$ conda activate chewie
+		$  chewBBACA.py AlleleCall -i ./rutas_ensamblados_gt500.txt -g /home/admingenomica/software/chewbbaca_schemas/salmonella_enterica/senterica_INNUENDO_wgMLST/Salmonella_enterica_INNUENDO_cgMLST/ --gl /home/admingenomica/software/chewbbaca_schemas/salmonella_enterica/cgMLST_schema_salmonella_EFSA.txt -o ./nuevo_chewbbaca_gt500_bsr08_mode2/ --cpu 20 --b /home/admingenomica/software/ncbi-blast-2.9.0+/bin/ --bsr 0.6 --mode 2 --no-inferred
+	C. Eliminar paralogos
+		$ chewBBACA.py RemoveGenes -i ./chewbbaca/results_cgMLST_EFSA/results_20240222T150605/results_alleles.tsv -g ./chewbbaca/results_cgMLST_EFSA/results_20240222T150605/RepeatedLoci.txt -o ./chewbbaca/results_cgMLST_EFSA/results_20240222T150605/results_alleles_NoRepeted.tsv
+	D. Extract coregenome loci
+		$ chewBBACA.py ExtractCgMLST -i ./chewbbaca/results_cgMLST_EFSA/results_20240222T150605/results_alleles_NoRepeted.tsv -o ./chewbbaca/results_cgMLST_EFSA/results_20240222T150605/cgMLST
+	E. Matriz de distancia
+		$ grapetree -p cgMLST.tsv --method distance -x asymmetric -y 3 --n_proc 10 > grape_tree_distance_matrix.tab
+		$ chewBBACA.py AlleleCallEvaluator -i ./ -g /home/admingenomica/software/chewbbaca_schemas/salmonella_enterica/senterica_INNUENDO_wgMLST/Salmonella_enterica_INNUENDO_cgMLST/ -o ./evaluation --cpu 10
+
+
+Para ecoli:   Solo con el coregenome (2360 loci)
+	Igual que con salmonella pero el esquema está en /home/admingenomica/software/chewbbaca_schemas/escherichia_coli/cgMLST_schema_ecoli_EFSA.txt
+
+Para campys: Solo con el coregenome (678 loci)
+	Igual que con salmonella pero el esquema está en /home/admingenomica/software/chewbbaca_schemas/campylobacter_jejuni/cgMLST_schema_campylobacter_EFSA.txt
+
+#otra opcion es instalar chewiesnake
+
+#######con pyMLST/wgMLST
+#crear base de datos con esquema cgMLST
+wgMLST import EURL_SALMONELLA_2022
+#añadir muestras a la base de datos creada
+while read line; do wgMLST add -s $line /home/admingenomica/software/cgMLST_databases/EURL_SALMONELLA_2022 ./$line/assembling/$line".fasta"; done < samples1.txt
+#crear matrix de distancias
+wgMLST distance -m 13 -o ./cgmlst_wgMLST_ditance_matrix.tab /home/admingenomica/software/cgMLST_databases/EURL_SALMONELLA_2022  ###### Nueva ubicación base de datos :(/labgenomica/cgMLST_schemas/cgMLST_databases_wgMLST_tool/EURL_SALMONELLA_2022)
+#Crear tabla perfiles para grapetree
+wgMLST mlst -m 13 -f grapetree -o cgmlst_wgMLST_profiles.tab /home/admingenomica/software/cgMLST_databases/EURL_SALMONELLA_2022  ###### Nueva ubicación base de datos :(/labgenomica/cgMLST_schemas/cgMLST_databases_wgMLST_tool/EURL_SALMONELLA_2022)
+#crear mst
+conda activate grapetree
+grapetree -p cgmlst_wgMLST_profiles.tsv --n_proc 20 > cgmlst_wgmlst_grapetree_tree.mst
+
+
+######################	
+#Análisis pangenómico#
+######################
+1. Desactivar conda (porque no conseguí instalar roary con conda, así que para que funcione debe estar desactivado. El nuevo compi podria solucionar esto en un periquete :P):
+conda deactivate
+2. Añadir a la PATH los programas fastree y cd-hit (el nuevo compi tbn podría añadirlos de forma permanente):
+export PATH=$PATH:/home/vserver1/software/cdhit/
+export PATH=$PATH:/home/vserver1/software/fasttree/
+3. Ejecutar el software roary (como último parámetro se le pasa una lista con los ficheros gff con los genomas anotados de cada muestra. Esta lista se la paso haciendo un find ejecutándolo en el directorio del proyecto. En caso de haber modificado los gff en el paso anterior, usar $(find ./ -name *_ed_nohyps.gff). Si quereir incluir la cepa de referencia, anotar la referencia (crear fichero gff o descarlo desde genebank) y añadirlo a la lista de ficheros gff que pasais como input a roary):
+(hacerlo en la carpeta /home/analisis/nombre_proyecto, igual que prokka)
+export PATH=$PATH:/home/admingenomica/software/sanger-pathogens-Roary-12a726e/bin/ (NO HACE FALTA!)
+roary -f ./ -e -n -r -v -z -p 30 $(find ./ -name *.gff)
+4. Copiar resultados a labgenomica
+5. Crear plots con los resultados en phandango o R con los ficheros accessory_binary_genes.fa.newick y gene_presence_absence.csv
+https://jameshadfield.github.io/phandango/#/
+/home/vserver1/software/Roary/contrib/roary_plots/roary_plots.py --labels accessory_binary_genes.fa.newick gene_presence_absence.csv
+6. core genome con secuencias completas
+mkdir solo_secuencias_completas
+python /labgenomica/scripts/cg_complete_sequences.py ./solo_secuencias_completas nºdemuestras $(ls ./pan_genome_sequences/)
+cd solo_secuencias_completas
+mkdir core_genes_sequences
+#mover las secuencias alineadas a la carpeta core_genes_sequences
+mv ./*fa.alntxt ./core_genes_sequences
+mkdir results
+python /labgenomica/scripts/create_cg_aln.py ./results ../gene_presence_absence.csv $(find ./core_genes_sequences/)
+5. Activar conda
+conda activate
+6. crear matrix de snps
+snp-sites cg_aln.txt > snp-sites.fasta
+snp-dists snp-sites.fasta > snp-matrix.tab
+
+PARA IDENTIFICAR LOS LOCUS CON SNPS ENTRE LAS DOS CEPAS (DIRECTORIO ./genes_con_diferencias):
+
+1.-Identificamos los locus que tienes diferencias con el script compare_sequences_coregenome.py (los identificadores de las dos muestras los sacamos del excel gene_presence_absence.csv)
+python /labgenomica/scripts/compare_sequences_coregenome.py JAKAJFOG DGGJAKEC ./genes_con_diferencias/ $(find ./pan_genome_sequences/ -name *.fa.aln)
+
+2.- cremos un txt con la lista de genes con snps:
+ls > genes_deseados.txt (eliminar la extenxion .fa.aln con reemplazar en bloc de notas)
+
+3.- sacamos la secuencia de esos genes ejecutando el script sacar_genes_pangenome.py a partir del fichero pan_genome_reference.fa que genera roary:
+python /labgenomica/scripts/sacar_genes_pangenome.py ../pan_genome_reference.fa ./genes_deseados.txt ./genes_con_snps.fasta
+
+4.-El genes_con_snps.fasta es el genoma de referencia. Lo indexamos con bwa y samtools y ejecutamos el mapeo de las lecturas y el variant calling con la pipe.
+
+
+
+#######################	
+#Análisis filogenético#
+#######################
+Para realizar el análisis filogenético se pueden seguir 2 enfoques diferentes:
+1. A partir de los SNPs identificados en el core genome de las cepas, usando como input el fichero con los SNPS generado en el bloque anterior (análisis pangenómico).
+	1. Sacamos los SNPs desde el fichero del fasta con el multialineamiento del core genome (fichero core_gene_alignment.aln que genera roary)
+	snp-sites core_gene_alignment.aln > snps_kentucky_samples.fasta 
+	2. Extraemos la matrix de snps
+	snp-dists snps_kentucky_samples.fasta > ./kentucky_coreGenome_snps_matrix.tab
+
+	core genome con secuencias completas
+	python /labgenomica/scripts/cg_complete_sequences.py ./solo_secuencias_completas 10 $(ls ./pan_genome_sequences/)
+	python /labgenomica/scripts/create_cg_aln.py ./results ../gene_presence_absence.csv $(find ./core_genes_sequences/)
+	3. Análisis filogenético con raxmlHPC. La carpeta de salida, que se elije con la opción w, debes darla con RUTA ABSOLUTA. 
+	raxmlHPC -f a -m GTRCAT -x 12345 -N 1000 -p 12345 -s ./snps_kentucky_samples.fasta -T 20 -n coregenome_kentucky -w /home/vserver1/Documentos/salmonellas_illumina/pangenome/phylogeny/
+	raxmlHPC -f a -m GTRCAT -x 12345 -N 1000 -p 12345 -s ./snpsites_mp_eurl_campy_2022_ed.fasta -T 20 -n mp_eurl_campy_2022 -w /labgenomica/2022/INTERLAB/EURL_CAMPY_22/phylogeny/no_false_snps/
+
+2. A partir de los SNPs identificados mediante el alineamiento de los reads con el genoma de referencia
+	1. Generar secuencias consenso de los genomas de cada cepa (este paso esta incluido en la pipeline, pero comentada por defecto. Descomentar en caso de querer ejecutarla).
+	2. Concatenar el genoma de referencia y las secuencias consenso de cada ensamblado en un fichero multifasta...
+	cat ref.fasta consenso_muestra1.fasta consenso_muestra2.fasta consenso_muestra3.fasta... > all.fasta
+	cat ./referencia_campy_2/Campylobacter_jejuni.fasta > phylogeny/all.fasta
+	for i in $(find ./ -name *consensus.fasta); do cat $i >> ./phylogeny/all.fasta; done
+	2. ...ó Realizar el multialineamiento de las secuencias consenso que se han generado a partir de los fichero vcfs con los SNPs identificados (paso 1) (En caso de tener solo los SNPs en los ficheros vcf no sería necesario hacer el alineamiento, puesto que las secuencias consenso y estarían alineadas)
+	mafft --auto all.fasta > all.aln 
+	3. (opcional) Eliminación de regiones recombinantes y extracción de regiones polimórficas con gubbins (esto genera el fichero gubbins.filtered_polymorphic_sites.fasta que tiene los snps alineados sin las regiones polimorficas).
+	run_gubbins.py --threads 30 --raxml_model GTRCAT -p gubbins all.aln
+	run_gubbins.py --threads 30 -p gubbins --model GTRCAT allConsensus.fasta
+	*En caso de no realizar este paso, extraer los sitios polimóficos con snp-sites (snp-sites core_gene_alignment.aln > snps_kentucky_samples.fasta)
+	4. extraer la matrix de SNPs
+	snp-dists gubbins.filtered_polymorphic_sites.fasta > ./kentucky_mapAp_snps_matrix.tab
+	5. raxmlHPC -f a -m GTRCAT -x 12345 -N 1000 -p 12345 -s ./gubbins.filtered_polymorphic_sites.fasta -T 20 -n map_kentucky -w /home/vserver1/Documentos/salmonellas_illumina/whole_genome_alignment/phylogeny/
+	
+ATENCION!! Con el script enraizar_editar_arboles.R de R se puede enraizar los arboles, eliminar ramas de cepas muy diferentes para mejorar la visibilidad, etc
+
+#####################################################
+#(opcional) Reconstrucción de plásmidos con Recycler#
+#####################################################
+1. Reconstrucción de secuencias plasmídicas a partir de los grafos del ensamblado
+make_fasta_from_fastg.py -g assembly_graph.fastg [-o assembly_graph.nodes.fasta]
+bwa index assembly_graph.nodes.fasta
+bwa mem assembly_graph.nodes.fasta R1.fastq.gz R2.fastq.gz | samtools view -buS - > reads_pe.bam
+samtools view -bF 0x0800 reads_pe.bam > reads_pe_primary.bam
+samtools sort reads_pe_primary.bam reads_pe_primary.sort.bam
+samtools index reads_pe_primary.sort.bam
+python2.7 /home/vserver1/software/Recycler/bin/recycle.py -g ./assembling/ZTA20_00785_assembling/spades/assembly_graph.fastg -k 55 -b ./recycler/ZTA20_00785_reads_pe_primary.sort.bam -i True -o ./recycler/
+
+ANOTAR VARIANTES snpEff
+#ver las bases de datos --> java -jar snpEff.jar databases | grep -i Bacillus_anthracis
+#descargarse la base de datos --> java -jar snpEff.jar download Brucella_suis
+#Ejecutar snpEff --> java -jar /home/admingenomica/software/snpEff/snpEff.jar -c /home/admingenomica/software/snpEff/snpEff.config -v Brucella_suis ./terciario/22-0017-M2_filter.vcf > ./terciario/test2.ann.vcf
+(-v es para que nos de información mientras se ejecuta)
+
+#Crear base de datos (como algun virus con segmentos que no esté registrado en las bases de datos) 
+	- Crear directorio en /home/admingenomica/software/snpEff/data/
+		mkdir juninvirus
+	- meter dentro los ficheros gbk descargados de genbank (genbank(full)) de cada segmento concatenados llamando al fichero genes.gbk
+	- añadir el directorio al archivo /home/admingenomica/software/snpEff/snpEff.config
+		#Junin virus
+			juninvirus.genome : Junin virus
+			juninvirus.chromosomes : FJ805377.1, JF799981.1
+
+	- crear base de datos --> java -jar /home/admingenomica/software/snpEff/snpEff.jar build -genbank -v juninvirus   
+	- Ejecutar snpEff --> java -jar /home/admingenomica/software/snpEff/snpEff.jar -c /home/admingenomica/software/snpEff/snpEff.config -v juninvirus ./terciario_ref_7_1/UNSGM-DryLab-2024-07_filter.vcf > ./terciario_ref_7_1/snpEff.ann.vcf
+
+
+
+**Si los nombres de los cromosomas no coinciden con los de la base de datos de snpEff (tres opciones):
+	1. Cambiar el nombre de los cromosomas nuestro .vcf con el de la base de datos:
+		- mirar como se llaman en la base de datos: $ java -jar /home/admingenomica/software/snpEff/snpEff.jar -v Salmonella_enterica_subsp_enterica_serovar_enteritidis_str_p125109
+		- ver nuestro nombre: $  cat ./enteritidis_muestreo2/SE1-22092021/terciario/SE1-22092021_filter.vcf | grep -v "^#" | cut -f 1 | uniq
+		- Cambiar nombre: $ cat ./enteritidis_muestreo2/SE1-22092021/terciario/SE1-22092021_filter.vcf | sed "s/^NC_011294.1/Chromosome/" > ./enteritidis_muestreo2/SE1-22092021/terciario/filter_updated_chr.vcf
+		- Lanzar el programa de nuevo
+	2. Crear nuestra propia base de datos desde NCBI:
+		- Ejecutar el fichero buildDbNcbi.sh : /home/admingenomica/software/snpEff/scripts/buildDbNcbi.sh NC_011294.1
+		- Lanzar el programa normal : admingenomica@labgenomica:/labgenomica/2021/SE_NGS_2021_001/enteritidis_muestreo2/SE1-22092021/terciario$ java -jar /home/admingenomica/software/snpEff/snpEff.jar -c /home/admingenomica/software/snpEff/snpEff.config -v NC_011294.1 ./SE1-22092021_filter.vcf > ./test2.ann.vcf
+	3. Crear nuestra propia base de datos desde un gff3:
+		- Crear directorio en snpEff/data/ : mkdir NC_011294.1_gff
+		- Descargar el gff3 del NCBI o donde sea y meterlo dentro de ese directorio llamandolo genes.gff (Importante lo de la extension gff y no gff3)
+		- Meter la referencia FASTA en el directorio snpEff/data/genomes/ con el nombre de la base de datos y la extensión .fa: NC_011294.1_gff.fa
+		- Descargarse la secuencias cds en nucleóticos y meterlas en ./snpEff/data/NC_011294.1_gff con la extnsión .fa
+		- Lanzar el programa normal
+
+
+#######################################
+#Extracción de plásmidos y cromosómico#
+#######################################
+
+1. Extracción de plasmídico. Para extraerlo podeis usar el script "extraer_contig.py" pasandole como argumentos el ensamblado, el fichero fasta de salida con la secuencia del plásmido y el contig que querais extraer.
+python extraer_contig.py ./MS7445/hybrid_assembling/assembly.fasta  ./comparando_pOXA-48_plasmids/MS7445_pOXA-48.fasta 5
+2. Extracción cromosómico. Tambíen podeis extraer el cromosómico con el script "extraer_cromosomico.py" pasandole una lista con los contigs plasmídicos. 
+python ../extraer_cromosomico.py ../MS7446/hybrid_assembling/assembly.fasta ./MS7446_cromosomico.fasta [5,8,3,6,2,4]
+3. Caracterización de plásmidos. Con la secuencia el plásmido extraido, podeis caracterizar el tipo de plásmido con plasmidfinder e identificar los genes de resistencia con resfinder.
+4. Anotación. Tras caracterizar el plásmido, podeis anotarlo (y eliminar la hypothetical proteins si quereis) con prokka y los scripts descritos anteriormente.
+5. Clustering (pangenoma). Una vez anotados, podeis agrupar los plasmidos en base al contenido genético.
+6. Generación matrix de SNPs.
+7. Visualización y comparación de plásmidos con BRIG. Usad el script "extract_genes_for_brig.py" pasándole como argumento el fichero gff con las anotaciones del plásmido.
+ python extract_genes_for_brig.py ./anotaciones_pOXA-48/MS7445/MS7445.gff
+ 
+
+################################
+#CONTAMINACION			#
+################################
+while read line; do echo $line; bwa mem -t 4 ../referencia/bant.fasta ./$line/assembling/scaffolds.fasta | samtools view -Sbh - > ./$line//assembling/assembling_mapping.bam; done < contaminated_samples
+
+while read line; do samtools sort -@ 4 ./$line/assembling/assembling_mapping.bam -o ./$line/assembling/assembling_mapping_sort.bam; done < contaminated_samples
+
+while read line; do samtools index ./$line/assembling/assembling_mapping_sort.bam; done < contaminated_samples
+
+while read line; do samtools view -Sbh -f 4 ./$line/assembling/assembling_mapping_sort.bam > ./$line/assembling/unmapped_contigs.bam; done < contaminated_samples
+
+while read line; do samtools sort ./$line/assembling/unmapped_contigs.bam -o ./$line/assembling/unmapped_contigs_sort.bam; done < contaminated_samples
+
+while read line; do bamToFastq -i ./$line/assembling/unmapped_contigs_sort.bam -fq ./$line/assembling/unmapped_contigs_sort.fastq; done < contaminated_samples
+
+while read line; do sed -n '1~4s/^@/>/p;2~4p' ./$line/assembling/unmapped_contigs_sort.fastq > ./$line/assembling/unmapped_contigs_sort.fasta; done < contaminated_samples
+
+############################
+# VER REORDENAMIENTOS SyRI #
+############################
+Alineamos las dos secuencias que queremos comparar:
+	$ /home/admingenomica/software/minimap2-2.22_x64-linux/minimap2 -a --eqx /labgenomica/Pruebas_Laura/syri/MS7445_pOXA-48.fasta /labgenomica/Pruebas_Laura/syri/MS8218_pOXA-48.fasta > /labgenomica/Pruebas_Laura/syri/out.sam
+Ejecutamos syri (ambiente conda --> SyRI) desde el directorio /SyRI/bin/
+	$ /home/admingenomica/software/miniconda3/envs/SyRI/bin/syri -c /labgenomica/Pruebas_Laura/syri/out.sam -r /labgenomica/Pruebas_Laura/syri/MS7445_pOXA-48.fasta -q /labgenomica/Pruebas_Laura/syri/MS8218_pOXA-48.fasta -k -F S --dir /labgenomica/Pruebas_Laura/syri/
+plot:
+crear genomes.txt con: "la ruta de los genomas	IDgenomas" ¿¿el primero tiene q ser la ref??
+ejecutar plotsr desde el mismo ambiente
+	$ cd donde sea
+	$ plotsr --sr syri.out --genomes genomes.txt -H 8 -W 8 -o plot.png
+

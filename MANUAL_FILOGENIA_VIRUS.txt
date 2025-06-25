@@ -1,0 +1,19 @@
+A. Alineamiento clustalo terminal
+clustalo -i ../SecuenciasGenogruposBTV_GLUE_seg8_reduced_edited.fasta -o SecuenciasGenogruposBTV_GLUE_seg8_reduced_clustalo_aln.fasta --auto --threads 20
+B. Snp-sites
+snp-sites SecuenciasGenogruposBTV_GLUE_seg8_reduced_clustalo_aln.fasta > snpsites_SecuenciasGenogruposBTV_GLUE_seg8_reduced_clustalo_aln.fasta
+C. MEGA FILOGENIA
+1. Identificar el mejor modelo evolutivo con MEGA
+Analysis > model > find best model
+2. Hacer análisis filogenético por el método Maximun likelihood tree con MEGA
+Analysis > phylogeny > constract Maximun likelihood tree(con el modelo identificado como mejor y 500 réplicas de bootstrap)
+3. Exportar nwk
+El MEGA va como le da la gana así que cuando tengamos el nwk exportado, lo tenemos que editar manualmente:
+Reemplazamos : 0, por 0.	1, por 1.	0.( por 0,(
+Igualmente habrá que ir cargando el archivo editado en itOL y corrigiendo manualmente otros errores (que se ven fácilmente) 
+Por ejemplo, después de una brach length puede que se haya quitado
+la coma que lo separa de la siguiente etiqueta
+4. Enraizar y colapsar ramas con menos de un 0.6 de bootstrap en R con enraizar_colapsar_ahsv_tree.R que esta en la carpeta del proyecto.
+5. Abrir en figtree y crear .treefile
+6. editar .treefile para colorear nodo con nuestro aislado
+7. abrir en figtree y exportar en pdf.

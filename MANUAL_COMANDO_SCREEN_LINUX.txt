@@ -1,0 +1,39 @@
+##########################
+# Linux "screen" command #
+##########################
+
+El comando "screen" de Linux permite generar y administrar un multiplexador de sesiones de linea de comando, dentro de una terminal. De este modo, se pueden crear sesiones independientes del terminal, que persisten aunque la conexión con el servidor se pierda, se cierre el terminal actual, etc. Una vez iniciada, la sesión se puede gestionar con comandos representados por un solo caracter, precedido de la secuencia de activación, que normalmente es ctrl-a. Por ejemplo, para desconectarse de la sesión actual, se usa la orden "d", por lo que habrá que pulsar "ctrl+a" seguido de "d" (ya sin la tecla de ctrl).
+
+Las sesiones de screen permiten multiplexado, lo que significa que podemos crear y mantener varias "ventanas" (interpretes de lineas de comando) independientes para realizar multiples tareas sumultaneamente. Dentro de una sesión se puede cambiar facilmente de una ventana a otra, manteniendo separados los procesos en ejecución en cada ventana. Por ejemplo, se pudede crear una sesión para lanzar una pipeline, desde la ventana 0, crear una ventana nueva (ctrl+a c) y en esta ventana 1, monitorear la carga del servidor continuamente con htop y desde una ventana adicional 2, seguir lanzado comandos puntales, etc.
+
+La interfaz del terminal se puede además dividir horizontal y/o verticalmente en secciones, para una mayor personalización. Cada sección puede contener una de las ventanas de la sesión, de modo que se muestren simultaneamente.
+En el fichero .screenrc se pueden incluir opciones de personalización, por ejemplo, el contenido de la linea inferior para que incluya información de las ventanas activas de la sesión, la habilitación del uso del cursor, etc.
+El uso del ratón está dehabilidatado por defecto. En teoría se podría habilitar incluyendo las opciones necesrias en el fichero de configuración .screenrc, pero su funcionamiento es bastante "erratico" y se desaconseja.
+
+Lista de comandos básicos:
+$ screen -h 			ayuda básica y lista de comandos completa
+$ screen -ls			lista de sesiones abiertas
+$ screen			crea una nueva sesión, sin nombre especififcado (el sistema le asigna un identificador)
+$ screen -S nombre_de_sesion	crea una nueva sesión, con el nomnbre especificado
+$ screen -r nombre_de_sesion	vuelve a conectarse a unan sesión anterior
+$ screen -d			desconecta una sesión que está conectada en otro terminal y la conecta al actual
+$ screen 
+
+
+Lista de acciones básicas, dentro de una sesión (mayusculas y minusculas tienen diferente significado):
+ctrl+a d	para desconectarse de la sesión actual
+ctrl+a k	para cerrar (kill) la sesión actual
+ctrl+a c	para crear una nueva ventana dentro de la sesion actual
+ctrl+a "	lista de ventanas en la sesión actual, permite moverse a la seleccionada
+ctrl+a 0,1,etc	cambia a la ventana numero 0,1,etc. de la sesion actual
+ctrl+a ctrl+a	alterna entre la ventana actual y la vista vista con anterioridad
+ctrl+a S	parte horizontalmente la sección actual en dos mitades
+ctrl+a |	parte verticalmente la sección actual en dos mitades
+ctrl+a tab	se mueve a la seccion siguiente
+ctrl+a X	cierra la sección actual
+ctrl+a Q	cierrar todas las secciones excepto la actual
+
+
+
+ctrl+a esc	para poder hacer scroll por la terminal con la flechas del teclado
+

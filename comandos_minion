@@ -1,0 +1,138 @@
+### ANALISIS FAST5
+#basecalling
+/home/vserver1/software/ont-guppy-cpu_4.2.2_linux64/ont-guppy-cpu/bin/guppy_basecaller -i ./fast5/ -s ./fastq/ --cpu_threads_per_caller 14 --num_callers 3 -c dna_r9.4.1_450bps_hac.cfg --trim_barcodes --compress_fastq
+
+#Calidad secuencación (-i directorio donde se encuentran los fastq y el fichero sequencing_sumary.txt)
+Rscript /home/vserver1/software/MinIONQC/MinIONQC.R -i ./ -q 12 -o MinIONQC/ -p 24
+
+#barcoder (para hacer el demultiplexado en caso de que el guppy_basecaller no haya funcionado
+/home/vserver1/software/ont-guppy-cpu_4.2.2_linux64/ont-guppy-cpu/bin/guppy_barcoder --input_path ./fastq_files --save_path ./fastq_demultiplex_guppybarcoder --require_barcodes_both_ends --compress_fastq --trim_barcodes -t 20 --config configuration.cfg --barcode_kits EXP-NBD104
+
+#concatenar ficheros fastq.gz
+cat ./*.fastq.gz > /home/vserver1/Documentos/salmonellas_MinIon/barcode7/barcode7.fastq.gz
+# o con un bucle:
+while read line; do mkdir ./$line; cat ./fastq_demultiplex_guppybarcoder/$line/*.fastq.gz > /home/vserver1/Documentos/salmonellas_MinIon_run2/$line/$line".fastq.gz"; done < barcodes.txt
+###
+
+#calidad de los raw reads con longqc
+python /home/admingenomica/software/LongQC/longQC.py sampleqc -o ./longQC/ -x ont-ligation -s barcode01 -p 20 ./barcode01.fastq.gz
+#con bucle:
+while read -r a b line; do echo $line; mkdir ./$line/primario; python /home/admingenomica/software/LongQC/longQC.py sampleqc -o ./$line/primario/longQC_raw_reads/ -x ont-rapid -s $line -p 20 ./$line/$line".fastq"; done < samples_ecoli
+
+
+#calidad de los raw reads con fastqc
+fastqc -t 25 -o ./barcode7/primario/ ./barcode7/barcode7.fastq.gz
+while read -r a b line; do echo $line;  fastqc -t 25 -o ./$line/primario ./$line/$line".fastq"; done < samples_ecoli
+
+#trimming con porechop
+for i in $(find ./ -maxdepth 1 -name "barcode*"); do barcode=${i##*/}; echo $barcode; porechop -i ./$barcode/$barcode".fastq.gz" -t 30 -v 1 -o ./$barcode/primario/$barcode"_trimmed.fastq.gz"; done
+#bucle con fichero barcodes.txt
+while read -r a b line; do echo $line; porechop -i ./$line/$line".fastq" -t 25 -v 1 -o ./$line/primario/$line"_trimmed.fastq"; done < samples_klebsiella
+
+
+#filtering con nanofilt (REQUIERE QUE LOS FASTQ DE INPUT ESTEN SIN COMPRIMIR)
+while read line; do echo $line; gunzip -c ./$line/primario/$line"_trimmed.fastq.gz" | NanoFilt -q 10 -l 500 | gzip > ./$line/primario/$line"_trimmed_filtered.fastq.gz"; done < barcodes.txt
+
+#calidad de los trimmed reads con fastqc
+for i in $(find ./ -maxdepth 1 -name "barcode*"); do barcode=${i##*/}; echo $barcode; fastqc -t 25 -o ./$barcode/primario/ ./$barcode/primario/$barcode"_trimmed_filtered.fastq.gz"; done
+while read -r a b line; do echo $line; fastqc -t 25 -o ./$line/primario ./$line/primario/$line"_trimmed_filtered.fastq.gz"; done < samples_ecoli
+
+#calidad de los trimmed reads con longqc
+while read line; do echo $line; python /home/admingenomica/software/LongQC/longQC.py sampleqc -o ./$line/primario/longQC_filtered_reads/ -x ont-ligation -s $line -p 20 ./$line/primario/$line"_trimmed_filtered.fastq.gz"; done < barcodes.txt
+
+
+
+
+
+
+
+
+#SHORT READS ILLUMINA
+#calidad de los short reads de illumina
+while read -r a b; do fastqc -o ./$b/primario_short_reads/ -t 20 -f fastq ./$b/primario_short_reads/$b*R1* ./$b/primario_short_reads/$b*R2*; done < ./barcodes.txt
+
+#trimming de los short reads con trimmomatic
+while read -r a b; do java -jar /usr/share/java/trimmomatic.jar PE -threads 20 ./$b/primario_short_reads/$b*"R1"*".fastq" ./$b/primario_short_reads/$b*"R2"*".fastq" ./$b/primario_short_reads/$b"_trimmed_1P.fastq" ./$b/primario_short_reads/$b"_trimmed_1U.fastq" ./$b/primario_short_reads/$b"_trimmed_2P.fastq" ./$b/primario_short_reads/$b"_trimmed_2U.fastq" ILLUMINACLIP:TruSeq3-PE.fa:2:30:10 LEADING:20 TRAILING:20 SLIDINGWINDOW:4:20 MINLEN:40; done < ./barcodes.txt
+
+#calidad de los trimmed short reads paired
+while read -r a b; do fastqc -o ./$b/primario_short_reads/ -t 20 -f fastq ./$b/primario_short_reads/$b"_trimmed_1P.fastq" ./$b/primario_short_reads/$b"_trimmed_2P.fastq"; done < ./barcodes.txt
+
+#calidad de los trimmed short reads unpaired
+while read -r a b; do fastqc -o ./$b/primario_short_reads/ -t 20 -f fastq ./$b/primario_short_reads/$b"_trimmed_1U.fastq" ./$b/primario_short_reads/$b"_trimmed_2U.fastq"; done < ./barcodes.txt
+
+#concatenar short reads unpaired
+while read -r a b; do cat ./$b/primario_short_reads/$b"_trimmed_1U.fastq" ./$b/primario_short_reads/$b"_trimmed_2U.fastq" > ./$b/primario_short_reads/$b"_trimmed_allU.fastq"; done < ./barcodes.txt
+
+
+
+
+
+#LANZAR ASSEMBLING HIBRIDO CON UNYCICLER
+exportar SPADES: export PATH=$PATH:/home/admingenomica/software/SPAdes-3.15.4-Linux/bin
+export PATH=$PATH:/home/vserver1/software/racon/build/bin (YA ESTA EN LA PATH)
+export PATH=$PATH:/home/vserver1/software
+
+#concatenar unpaired reads
+while read -r dir line; do cat ./$dir/$line/Illumina/primario/$line"_trimmed_1U.fastq.gz" ./$dir/$line/Illumina/primario/$line"_trimmed_2U.fastq.gz" > ./$dir/$line/Illumina/primario/$line"_trimmed_allU.fastq.gz"; done < samples_nanopore.txt
+
+#LANZAR ASSEMBLING HIBRIDO CON UNYCICLER (con ambos unpaired reads)
+while read -r a b; do unicycler -1 ./$b/primario_short_reads/$b"_trimmed_1P.fastq" -2 ./$b/primario_short_reads/$b"_trimmed_2P.fastq" -s ./$b/primario_short_reads/$b"_trimmed_1U.fastq" -s ./$b/primario_short_reads/$b"_trimmed_2U.fastq" -l ./$b/primario_long_reads/$b"_trimmed_filtered.fastq.gz" -o ./$b/hybrid_assembling -t 30; done < ./barcodes.txt
+
+#ESTA ES LA MEJOR: LANZAR ASSEMBLING HIBRIDO CON UNYCICLER (con los unpaired reads concatenados [2])
+while read -r a b line; do /home/admingenomica/software/Unicycler/unicycler-runner.py -1 ../Illumina/$b/primario/$b"_trimmed_1P.fastq.gz" -2 ../Illumina/$b/primario/$b"_trimmed_2P.fastq.gz" -s ../Illumina/$b/primario/$b"_trimmed_allU.fastq.gz" -l ./$line/primario/$line"_trimmed_filtered.fastq.gz" -o ./$line/hybrid_assembling -t 30; done < ./samples_ecoli
+
+
+#LANZAR ASSEMBLING HIBRIDO CON UNYCICLER (sin los unpaired reads)
+while read -r a b; do unicycler -1 ./$b/primario_short_reads/$b"_trimmed_1P.fastq" -2 ./$b/primario_short_reads/$b"_trimmed_2P.fastq" -l ./$b/primario_long_reads/$b"_trimmed_filtered.fastq.gz" -o ./$b/hybrid_assembling_3 -t 30; done < ./barcodes.txt
+
+
+
+
+
+#comprimir ficheros fastq short reads para hacer luego el análisis de calidad con quast. NO HACE FALTA PORQUE YA LLEGAMOS CON ELLOS COMPRIMIDOS
+while read -r a b; do echo $b; gzip ./$b/primario_short_reads/$b"_trimmed_1P.fastq"; done < ./barcodes.txt
+while read -r a b; do echo $b; gzip ./$b/primario_short_reads/$b"_trimmed_2P.fastq"; done < ./barcodes.txt
+while read -r a b; do echo $b; gzip ./$b/primario_short_reads/$b"_trimmed_allU.fastq"; done < ./barcodes.txt
+
+#analisis de calidad de los assemblies con quast
+while read -r a b line; do quast.py -o ./$line/hybrid_assembling/quast/ -t 20 --pe1 ../Illumina/$b/primario/$b"_trimmed_1P.fastq.gz" --pe2 ../Illumina/$b/primario/$b"_trimmed_2P.fastq.gz" --single ../Illumina/$b/primario/$b"_trimmed_allU.fastq.gz" --nanopore ./$line/primario/$line"_trimmed_filtered.fastq.gz" ./$line/hybrid_assembling/assembly.fasta; done < ./samples_ecoli
+
+
+
+
+
+#extraer cromosoma
+python ../extraer_chromosomico.py ./hybrid_assembling_2/assembly.fasta MS3847
+
+#extraer plasmido
+while read -r a b; do echo $b; python extraer_plasmidos.py ./$b/hybrid_assembling/assembly.fasta $b; done < ./barcodes.txt
+
+#anotar plasmido
+/home/vserver1/software/prokka/bin/prokka --kingdom Bacteria --proteins /home/vserver1/software/resfinder_db/resfinder_all_prot_db.fasta --outdir ./anotaciones_filipa/ --cpus 35 --prefix MS3847_plasmid --force ./hybrid_assembling_2/MS3847_plasmid.fasta 
+
+#anotar cromosoma
+/home/vserver1/software/prokka/bin/prokka --kingdom Bacteria --proteins /home/vserver1/software/resfinder_db/resfinder_all_prot_db.fasta --outdir ./anotaciones_filipa/cromosoma_49 --cpus 35 --prefix MS3849_chr ./hybrid_assembling_2/MS3849_chromosome.fasta
+
+
+
+#Lanzar Blast entre los plasmidos para ver similitud de secuencias
+ blastn -query ./plasmids.fasta -out ./results/plasmids_blast_results.txt -db ./plasmids_BlastDB -evalue 1e-3 -outfmt 6
+ 
+ 
+#Lanzar Blast general de cada plásmido contra la base de datos nt de Blast
+
+
+
+#ALINEAMIENTO CON REFRENCIA
+#Creación de índice
+/home/admingenomica/software/minimap2-2.22_x64-linux/minimap2 -x map-ont -d ../../referencia_mpox/ON563414_monkey_pox_virus.mmi ../../referencia_mpox/ON563414_monkey_pox_virus.fasta
+#Alineamiento con minimap2
+/home/admingenomica/software/minimap2-2.22_x64-linux/minimap2 -ax map-ont ../../referencia_mpox/ON563414_monkey_pox_virus.mmi ./primario/Sample-06-X-2022_trimmed_filtered.fastq.gz -t 24 > ./secundario/Sample-06-X-2022.sam
+#sam to bam
+samtools view -Sbh ./secundario/Sample-06-X-2022.sam -o ./secundario/Sample-06-X-2022.bam
+#sort bam
+samtools sort ./secundario/Sample-06-X-2022.bam -o ./secundario/Sample-06-X-2022_sort.bam
+#index bam
+samtools index ./secundario/Sample-06-X-2022_sort.bam
+
+
