@@ -1,7 +1,7 @@
 """
 Base class for external programs
 """
-from ..program import Program
+from ..pipeline import Program
 
 
 class ExternalProgram(Program):

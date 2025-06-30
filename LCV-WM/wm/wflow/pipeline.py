@@ -1,10 +1,21 @@
 """
-Base class for pipelines
+Base classes for pipelines
 """
-from .program import Program
+
+
+class Program():
+    """
+    Base class for a running program, a step in the pipeline
+    """
+
+    name = ""
+    command_line = ""
 
 
 class Pipeline():
+    """
+    Base class for pipeline
+    """
     name = ""
     imputs = []
     outputs = []
